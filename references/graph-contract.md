@@ -1,20 +1,21 @@
 # Graph contract
 
-Use this contract when creating or restructuring an implementation graph. The JSON file is the durable source of truth; the terminal rendering is its human-facing view.
+The JSON graph is the durable control plane. The terminal view is a compact status display, not a work diary.
 
 ## State file shape
 
 ```json
 {
   "schema_version": 1,
-  "task": "Fix duplicate payment submission",
-  "goal": "A single user action creates at most one charge",
-  "request": "The user's original request, preserved without reinterpretation",
-  "non_goals": ["Do not redesign the checkout UI"],
+  "task": "Fix dashboard card overlap",
+  "goal": "Cards remain aligned and usable at supported widths",
+  "request": "Preserve the user's original request verbatim",
+  "visual_required": true,
+  "non_goals": ["Do not redesign unrelated dashboard sections"],
   "acceptance_criteria": [
     {
       "id": "A1",
-      "text": "Repeated submission reuses the existing payment attempt",
+      "text": "Cards do not overlap at 768 px",
       "status": "pending",
       "evidence": []
     }
@@ -22,46 +23,94 @@ Use this contract when creating or restructuring an implementation graph. The JS
   "invariants": [
     {
       "id": "I1",
-      "text": "Existing successful checkout remains unchanged",
-      "check": "pytest tests/checkout/test_success.py",
+      "text": "Keyboard order and accessible names remain correct",
+      "check": "Run the dashboard accessibility check",
       "status": "pending",
       "evidence": []
     }
   ],
   "baseline": {
     "revision": "current commit or n/a",
-    "working_tree": "clean, dirty, or a concise description",
-    "checks": [
-      {
-        "command": "pytest tests/checkout",
-        "status": "passed",
-        "summary": "42 passed"
-      }
-    ],
+    "working_tree": "clean, dirty, or concise scoped description",
+    "checks": [],
     "pre_existing_failures": []
   },
   "nodes": [
     {
-      "id": "N1",
-      "title": "Reproduce duplicate submission",
-      "kind": "work",
-      "status": "ready",
-      "scope": ["tests/checkout/test_idempotency.py"],
-      "actions": ["Add a failing concurrency regression test"],
-      "exit_checks": ["The test fails for the duplicate-charge reason"],
+      "id": "C0",
+      "title": "Contract and baseline",
+      "kind": "contract",
+      "status": "passed",
+      "scope": ["request, repository state, existing checks"],
+      "actions": ["Lock acceptance criteria and protected behavior"],
+      "exit_checks": ["Contract and baseline are recorded"],
+      "evidence": ["Request, working tree, and baseline reviewed"],
+      "attempt": 1,
+      "max_attempts": 1,
+      "notes": ""
+    },
+    {
+      "id": "G1",
+      "title": "Code and behavior verification",
+      "kind": "gate",
+      "status": "blocked",
+      "scope": ["affected dashboard behavior and regressions"],
+      "actions": ["Run targeted and affected checks"],
+      "exit_checks": ["Affected code and behavior checks pass"],
       "evidence": [],
       "attempt": 0,
       "max_attempts": 2,
       "notes": ""
+    },
+    {
+      "id": "GV",
+      "title": "Rendered dashboard verification",
+      "kind": "visual_gate",
+      "status": "blocked",
+      "scope": ["dashboard at 375, 768, and 1440 px"],
+      "actions": ["Run the app and inspect representative states"],
+      "exit_checks": ["Compare rendered output to the requirement after the final UI edit"],
+      "evidence": [],
+      "attempt": 0,
+      "max_attempts": 2,
+      "notes": ""
+    },
+    {
+      "id": "RV",
+      "title": "Diagnose visual mismatch",
+      "kind": "repair",
+      "status": "blocked",
+      "scope": ["the failed visual criterion"],
+      "actions": ["Identify one evidence-backed correction"],
+      "exit_checks": ["A bounded correction is ready for reinspection"],
+      "evidence": [],
+      "attempt": 0,
+      "max_attempts": 2,
+      "notes": ""
+    },
+    {
+      "id": "T1",
+      "title": "Verified completion",
+      "kind": "terminal",
+      "status": "blocked",
+      "scope": ["complete task diff and evidence"],
+      "actions": ["Review acceptance, invariants, risks, and changed files"],
+      "exit_checks": ["Every required gate has fresh passing evidence"],
+      "evidence": [],
+      "attempt": 0,
+      "max_attempts": 1,
+      "notes": ""
     }
   ],
   "edges": [
-    {"from": "N1", "to": "N2", "kind": "dependency", "label": "reproduced"},
-    {"from": "G2", "to": "R1", "kind": "repair", "label": "fails"},
-    {"from": "R1", "to": "G2", "kind": "retry", "label": "recheck"}
+    {"from": "C0", "to": "G1", "kind": "dependency", "label": "contract locked"},
+    {"from": "G1", "to": "GV", "kind": "dependency", "label": "code passes"},
+    {"from": "GV", "to": "T1", "kind": "dependency", "label": "visual pass"},
+    {"from": "GV", "to": "RV", "kind": "repair", "label": "visual mismatch"},
+    {"from": "RV", "to": "GV", "kind": "retry", "label": "reinspect"}
   ],
   "current_node": null,
-  "next_action": "Start N1",
+  "next_action": "Start the contract and baseline",
   "changed_files": [],
   "decisions": [],
   "risks": [],
@@ -69,84 +118,88 @@ Use this contract when creating or restructuring an implementation graph. The JS
 }
 ```
 
-## Required semantics
+`visual_required` is optional for compatibility and defaults to `false`. Set it to `true` whenever success includes rendered UI, layout, styling, animation, responsive behavior, or visual parity.
 
-### Contract fields
+## Contract semantics
 
-- Preserve `request` so later compression cannot silently change the task.
-- Make acceptance criteria observable and binary where possible.
-- Use invariants for behavior that must remain true while the requested behavior changes.
-- Record non-goals to resist unrelated cleanup and scope drift.
-- Keep `risks` for unresolved completion threats only. Use invariants for protected behavior and non-goals for scope boundaries; resolve or report every risk before completion.
-- Record pre-existing failures separately; do not claim they were introduced by the task.
+- Preserve `request`; compaction must not reinterpret the job.
+- Make acceptance criteria observable and binary.
+- Protect existing behavior with invariants. Record non-goals to prevent scope drift.
+- Separate pre-existing failures from task-caused failures.
+- Keep `risks` limited to unresolved threats to completion. Resolve or report every risk.
+- Keep state concise: record decisions and evidence, not narration.
 
-### Node fields
+## Nodes
 
-- `id`: Stable identifier such as `N1`, `D1`, `G1`, `R1`, or `T1`.
-- `kind`: One of `contract`, `work`, `decision`, `gate`, `repair`, or `terminal`.
-- `status`: One of `blocked`, `ready`, `active`, `passed`, `failed`, or `skipped`.
-- `scope`: Expected files, modules, or behavior boundaries. Update before exceeding it.
-- `actions`: Concrete operations; avoid vague verbs such as “improve” without an observable outcome.
-- `exit_checks`: Commands or inspections that prove the node is complete.
-- `evidence`: Fresh results supporting the current status. A passed node requires evidence.
-- `attempt` and `max_attempts`: Bound repeated repair. Default to two attempts for uncertain work.
+- `id`: stable ID such as `C0`, `N1`, `D1`, `G1`, `GV`, `R1`, or `T1`.
+- `kind`: `contract`, `work`, `decision`, `gate`, `visual_gate`, `repair`, or `terminal`.
+- `status`: `blocked`, `ready`, `active`, `passed`, `failed`, or `skipped`.
+- `scope`: files, modules, behavior, viewports, or states the node may touch.
+- `actions`: concrete operations, not vague goals.
+- `exit_checks`: commands or inspections that prove completion.
+- `evidence`: fresh result plus relevant command, runtime, screenshot, viewport, or artifact.
+- `attempt` / `max_attempts`: bounded retries; default uncertain work to two attempts.
 
-### Edge fields
+A passed node requires exit checks and evidence. A required `visual_gate` cannot be skipped. A passed terminal requires at least one acceptance criterion, one protected invariant, a passed code/behavior gate, and every required visual gate. The terminal must depend directly on a verification gate.
 
-- `dependency`: The destination cannot start until the source passes or is deliberately skipped.
-- `branch`: A decision routes to one or more explicitly selected destinations; mark inactive alternatives skipped with a decision record.
-- `repair`: A failed gate routes to diagnosis or repair.
-- `retry`: Repair routes back to the exact invalidated gate, not automatically to the entire task.
+## Edges
 
-When a branch or repair route is not taken, mark its nodes `skipped` and record why in `decisions`. Do not leave unused routes blocked at completion.
+- `dependency`: destination waits for the source to pass or be deliberately skipped.
+- `branch`: a decision selects a route; record the choice and skip inactive alternatives.
+- `repair`: a failed gate routes to diagnosis or correction.
+- `retry`: repair returns to the exact invalidated gate.
 
-Dependency and branch edges must be acyclic. Repair and retry edges may form bounded cycles.
+Dependency and branch edges must be acyclic. Repair and retry edges may create bounded cycles. Every edge has one source and one destination. Converge selected branches at a named integration or gate node.
 
-Every edge has exactly one source and one destination. If routing depends on new evidence, introduce a decision node; never use an ambiguous destination such as “A or B.” Every branch used by the task must visibly converge at a named integration or verification node.
+## Build only what controls the work
 
-Use only `dependency`, `branch`, `repair`, and `retry` as edge kinds. A merge is modeled by multiple dependency edges targeting the same node, never by a separate `merge` kind.
-
-## Graph construction rules
-
-1. Start with a contract/baseline node.
-2. Put discovery before design decisions when repository evidence is needed.
-   - Unknown cause: add a decision node and conditional solution branches.
-   - Mutually exclusive hypotheses: never place their fixes on one unconditional path.
-   - Unknown mechanism: keep implementation nodes conditional until evidence selects them.
-3. Split independent implementation surfaces into separate nodes.
-4. Merge them at an integration node.
-5. Use a targeted verification gate before the regression gate.
-6. Give every failure-prone gate a named repair route and retry limit.
+1. Start with contract and baseline.
+2. Put evidence-gathering discovery before an uncertain decision.
+3. Split only independently verifiable implementation surfaces.
+4. Add targeted behavior, regression/invariant, and final acceptance gates.
+5. When `visual_required` is true, add a `visual_gate` after code checks and before the terminal node.
+6. Give failure-prone gates a repair route and retry limit.
 7. End at exactly one terminal node.
-8. Make the terminal node depend on the final regression and acceptance gate.
 
-Keep the graph small enough to reason about. Prefer 6–15 nodes. If it exceeds 20, collapse detail into node actions or divide the task into graph phases with explicit handoff gates.
+Use about 4–7 nodes for a small change, 6–12 for medium work, and 10–15 for large or high-risk work. Split into phases before 20 nodes. A graph that takes longer to maintain than the change is too large.
+
+## Visual proof
+
+Code checks and source inspection cannot pass a visual gate. Evidence must come from the running product using browser, screenshot, or preview tooling and identify what was inspected.
+
+Cover the states and viewports relevant to the request, including representative responsive widths and any affected theme. Inspect alignment, spacing, typography, clipping, overflow, stacking, visible focus, feedback, loading, empty, error, long-content, and disabled states as applicable. Keep semantic, accessible-name, and keyboard assertions in the code/behavior gate or a dedicated accessibility gate; visual similarity does not prove them.
+
+Any relevant UI edit invalidates older visual evidence. If code passes but rendered output fails, route to a visual repair node, apply one bounded correction, then rerun affected code checks and the visual gate. If the app, tool, or required reference is unavailable, leave the gate blocked or failed; never infer a pass.
 
 ## Terminal presentation
 
-Use the helper's rendering as the default. When writing one manually, use a fenced `text` block and keep IDs identical to the state file:
-
 ```text
 ── IMPLEMENTATION GRAPH ─────────────────────────────────────
-TASK  Prevent duplicate payment submission
-GOAL  One action creates at most one charge
+TASK     Fix dashboard card overlap
+GOAL     Aligned and usable cards at supported widths
+VISUAL   required
 
 [C0 ✓ PASSED] Contract + baseline
-  └─locked→ [N1 ▶ ACTIVE] Reproduce duplicate submission
-               └─reproduced→ [N2 ○ BLOCKED] Add idempotency boundary
-                                  └─implemented→ [G1 ○ BLOCKED] Targeted tests
-                                                       ├─pass→ [G2 ○ BLOCKED] Regression gate
-                                                       └─fail→ [R1 ○ BLOCKED] Diagnose + repair
-                                                                          └─retry→ [↩ G1]
+    └─locked→ [N1 ▶ ACTIVE] Reproduce at 768 px
+        └─evidence→ [N2 ○ BLOCKED] Bounded layout correction
+            └─implemented→ [G1 ○ BLOCKED] Code + behavior gate
+                ├─pass→ [GV ○ BLOCKED] Visual-runtime gate
+                │   └─pass→ [T1 ○ BLOCKED] Verified completion
+                └─fail/repair→ [R1 ○ BLOCKED] Diagnose before editing
+                    └─retry 1/2→ [↩ G1]
 
-CURRENT  N1 — Reproduce duplicate submission
-NEXT     Run the concurrency reproduction test
+CURRENT  N1
+NEXT     Capture the 768 px failure
 ```
 
-The diagram must expose branches, merges, failure routes, and blocked work. Follow it with node contracts only when details would otherwise be lost.
+For non-linear graphs, append a `ROUTES` ledger as `SOURCE --label/kind--> TARGET`. Show node contracts only when the graph alone loses important scope or exit evidence.
 
-For any non-linear graph, append a `ROUTES` ledger listing each edge as `SOURCE --label/kind--> TARGET`. This is the topology source of truth when terminal indentation is imperfect.
+In plan-only mode, the first executable node is `ready` and every dependent node is `blocked`. Nothing is `active` or `passed` without execution evidence. A branch, repair, retry, or multi-source merge always requires the complete `ROUTES` ledger; every selected branch must visibly converge.
 
-## Evidence freshness
+## Freshness, retries, and stopping
 
-Treat evidence as stale when any relevant source, test, configuration, dependency, schema, or generated artifact changed after the evidence was collected. Rerun the invalidated gate and replace or annotate the evidence; never silently carry a pass across a relevant edit.
+- Evidence becomes stale after a relevant source, test, configuration, dependency, schema, generated artifact, or rendered UI change.
+- Do not abandon the task on the first failure. Follow a distinct evidence-backed repair route.
+- Do not repeat the same hypothesis more than twice. After the second failure, return to diagnosis or redesign instead of stacking patches.
+- Stop only for missing authority or credentials, destructive ambiguity, unavailable required evidence, exhausted retry budget, or evidence that the outcome is unsafe or infeasible.
+- On stop, preserve the graph and report the blocker, evidence, completed scope, and shortest unblock. Never mark partial work complete.
