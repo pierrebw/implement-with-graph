@@ -1,0 +1,12 @@
+interface:
+  display_name: Implement with Graph
+  short_description: Guard coding work with persistent task graphs
+  default_prompt: Use $implement-with-graph to plan and execute this change through
+    a guarded terminal-style implementation graph.
+policy:
+  products:
+  - chatgpt
+  - codex
+  - api
+  - atlas
+  allow_implicit_invocation: true
