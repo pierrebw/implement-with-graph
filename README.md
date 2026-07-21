@@ -1,93 +1,132 @@
 # Implement with Graph
 
-A reliability-focused Codex skill that plans and executes non-trivial coding work as a persistent, terminal-style dependency graph.
+A Codex skill for executing non-trivial code changes through a persistent terminal-style dependency graph.
 
-It is designed for long-running implementation, bug-fix, refactor, improvement, and migration tasks where context compaction, repeated patching, regressions, or premature claims of completion can reduce reliability.
+It is built for the failure modes that waste the most time: context compaction, vague completion claims, repeated patching, regressions, weaker-model drift, and UI changes where tests pass but the rendered result is still wrong.
 
-## Why this exists
+## Core behavior
 
-Open-ended agent loops can drift after repeated prompts or context compression. A fix may solve one symptom while breaking protected behavior elsewhere, and prior goals or test evidence can disappear from the active context.
+- Acts after the minimum safe inspection instead of turning implementation into an essay.
+- Keeps user-facing updates to decisions, evidence, blockers, and verified outcomes.
+- Preserves the original request, acceptance criteria, protected invariants, non-goals, baseline, decisions, risks, and changed files in durable state.
+- Breaks work into bounded nodes with explicit dependencies, branches, repair routes, and retry limits.
+- Requires fresh evidence before a node can pass.
+- Recovers after context compaction from graph state, the real diff, and rerun checks—not chat memory.
+- Treats passing code checks and correct rendered behavior as separate facts.
+- Persists through evidence-backed repair routes, but stops before blind patch stacking or unsafe guessing.
 
-`implement-with-graph` makes the implementation graph the durable control record. Codex must recover from that record, the actual repository diff, and fresh verification evidence—not conversational memory alone.
+## Code proof is not visual proof
 
-## What it does
+For UI work, the graph has two independent gates:
 
-- Presents implementation plans as terminal-style graphs.
-- Preserves the original request, measurable goal, acceptance criteria, invariants, non-goals, baseline results, decisions, risks, and changed files.
-- Stores task state under `.codex/implementation-graphs/<task-slug>.json` during implementation.
-- Divides work into bounded nodes with declared scope, actions, exit checks, evidence, and retry limits.
-- Models dependencies, evidence-driven branches, repair routes, merges, and bounded retries.
-- Keeps at most one node active unless parallel agent work is explicitly requested.
-- Requires reproduction and regression coverage for defect fixes when feasible.
-- Invalidates stale test evidence after relevant edits.
-- Prevents the terminal node from passing while required criteria, invariants, nodes, routes, or risks remain unresolved.
-- Prints a final terminal graph and evidence-based handoff.
+| Gate | Proves | Does not prove |
+|---|---|---|
+| Code + behavior | Tests, types, integration behavior, invariants, keyboard order, accessible names | Pixel alignment, clipping, responsive reflow, visual parity |
+| Visual runtime | The running product renders correctly at relevant viewports, themes, and states | Semantics, keyboard behavior, or correctness hidden behind the screenshot |
+
+When `visual_required` is true, verified completion is impossible unless a `visual_gate` passes after the final relevant UI edit. The visual gate cannot be skipped. If the app, preview tooling, or required reference is unavailable, the task stays blocked or not verified.
 
 ## Example
 
 ```text
 ── IMPLEMENTATION GRAPH ─────────────────────────────────────
-TASK     Fix duplicate payment submission
-GOAL     One user action creates at most one charge
-PROTECT  Existing successful checkout behavior
+TASK     Fix dashboard cards overlapping at 768 px
+GOAL     Match the reference without regressing 375 or 1440 px
+PROTECT  Keyboard order, accessible names, and dark theme
+VISUAL   required
 
 [C0 ✓ PASSED] Contract + baseline
-    └─locked→ [N1 ▶ ACTIVE] Reproduce duplicate submission
-        └─evidence→ [D1 ○ BLOCKED] ◆ Identify duplicate origin
-            ├─request race→ [N2A ○ BLOCKED] Guard request boundary
-            └─task retry→ [N2B ○ BLOCKED] Make task idempotent
-                └─selected branch→ [G1 ○ BLOCKED] Targeted verification
-                    ├─pass→ [G2 ○ BLOCKED] Regression + invariants
-                    │   └─pass→ [T1 ○ BLOCKED] Verified completion
-                    └─fail/repair→ [R1 ○ BLOCKED] Diagnose before editing
-                        └─retry 1/2→ [↩ G1]
+    └─locked→ [N1 ▶ ACTIVE] Reproduce and isolate the layout cause
+        └─evidence→ [N2 ○ BLOCKED] Apply one bounded correction
+            └─implemented→ [G1 ○ BLOCKED] Code + behavior gate
+                ├─pass→ [GV ○ BLOCKED] Visual-runtime gate
+                │   ├─pass→ [T1 ○ BLOCKED] Verified completion
+                │   └─mismatch/repair→ [RV ○ BLOCKED] Visual repair
+                │       └─recheck/retry 1/2→ [↩ G1]
+                └─fail/repair→ [RC ○ BLOCKED] Code repair
+                    └─retry 1/2→ [↩ G1]
 
 CURRENT  N1
-NEXT     Add the failing concurrency regression test
+NEXT     Capture the 768 px failure and compare it to the reference
+
+ROUTES
+  C0 --locked/dependency--> N1
+  N1 --evidence/dependency--> N2
+  N2 --implemented/dependency--> G1
+  G1 --pass/dependency--> GV
+  G1 --fail/repair--> RC
+  RC --retry 1/2/retry--> G1
+  GV --pass/dependency--> T1
+  GV --mismatch/repair--> RV
+  RV --recheck 1/2/retry--> G1
 ```
+
+For non-visual work, `VISUAL` is `not required` and the visual gate is omitted.
 
 ## Usage
 
-Invoke the skill explicitly when you want the guarded workflow:
+Invoke it directly:
 
 ```text
-Use $implement-with-graph to implement this change and do not finish until every graph gate passes.
+Use $implement-with-graph to implement this change.
 ```
 
-It can also activate automatically for non-trivial implementation, repair, improvement, refactor, migration, or resumed coding work.
+The skill also supports three operating modes:
 
-### Plan-only mode
-
-Codex inspects the project and returns a terminal graph with node contracts. It does not modify product files or create durable state unless implementation or a saved plan was authorized.
-
-### Plan-and-implement mode
-
-Codex creates a task-specific state file, validates and renders the graph, then executes one ready node at a time. Each node must pass its exit checks with current evidence before downstream work becomes ready.
-
-### Resume after context compaction
-
-Codex reloads the active state file, validates it, inspects the actual working tree and diff, reopens the current node's files, and reruns evidence that may have become stale before continuing.
+- **Plan only:** inspect and return a compact terminal graph; the first executable node is ready and dependents are blocked. Nothing is active or passed without evidence.
+- **Plan and implement:** create durable graph state, present the graph, and execute ready nodes.
+- **Resume:** recover from state, diff, and fresh verification after interruption or context compaction.
 
 ## State helper
 
-`scripts/graph_state.py` provides deterministic graph operations:
+Graph state lives at `.codex/implementation-graphs/<task-slug>.json` during implementation.
 
 ```bash
 python3 scripts/graph_state.py init .codex/implementation-graphs/task.json \
   --task "Task description" \
-  --goal "Observable outcome"
+  --goal "Observable outcome" \
+  --visual-required
 
 python3 scripts/graph_state.py validate .codex/implementation-graphs/task.json
 python3 scripts/graph_state.py render .codex/implementation-graphs/task.json
 python3 scripts/graph_state.py checkpoint .codex/implementation-graphs/task.json
 
 python3 scripts/graph_state.py set-status \
-  .codex/implementation-graphs/task.json N2 passed \
-  --evidence "pytest tests/test_feature.py: 8 passed" \
-  --next "Run integration gate G2"
+  .codex/implementation-graphs/task.json G1 passed \
+  --evidence "Affected test suite: 42 passed" \
+  --next "Run visual gate GV"
 ```
 
-The validator checks node and edge types, dependency cycles, active-node limits, retry budgets, required evidence, terminal criteria, unresolved risks, and incomplete graph routes.
+Existing schema-version-1 files without `visual_required` remain valid and default to non-visual work.
+
+## Machine-enforced safeguards
+
+The validator rejects:
+
+- multiple active nodes;
+- invalid dependencies and unbounded topology;
+- graphs larger than 20 nodes instead of phased work;
+- passed nodes without exit checks and evidence;
+- completion without acceptance criteria, protected invariants, or a passed code/behavior gate;
+- a terminal node that does not depend directly on verification;
+- required visual work without a visual gate, a preceding code gate, or a visual repair route;
+- skipped or incomplete required visual gates;
+- completion with incomplete nodes, criteria, invariants, or unresolved risks;
+- verbose multi-line `next_action` state that is hard to recover from.
+
+## Visual-runtime verification
+
+A visual pass requires the running product. Source review and unit tests are insufficient.
+
+Inspect the relevant viewport sizes, themes, and states. Depending on the change, check alignment, spacing, typography, clipping, overflow, stacking, responsive reflow, visible focus, feedback, loading, empty, error, long-content, and disabled states. Record what was inspected and where. Any relevant UI edit invalidates the previous visual evidence.
+
+If code passes but the rendered result fails, the graph routes to one bounded visual correction, then reruns affected code checks and visual inspection.
+
+## Persistence and stopping
+
+The skill does not quit after the first failure. It follows a distinct evidence-backed repair route while a safe path remains.
+
+It stops when credentials or authority are missing, the next action is destructive or materially ambiguous, required evidence cannot be obtained, the retry budget is exhausted, or evidence shows the requested outcome is unsafe or infeasible. A stopped task reports the blocker, evidence, completed scope, and shortest unblock; it is never labeled complete.
 
 ## Repository structure
 
@@ -98,8 +137,8 @@ references/graph-contract.md   Durable state schema and graph contract
 scripts/graph_state.py         State validator, renderer, and checkpoint helper
 ```
 
-## Reliability boundaries
+## Reliability boundary
 
-This skill does not replace Codex's internal reasoning engine and cannot guarantee that a weaker model will never make a mistake. It improves reliability by making scope, protected behavior, dependencies, evidence, recovery state, and completion rules explicit and machine-checkable.
+This skill cannot make a weak model infallible. It makes drift and premature completion harder by turning scope, invariants, routing, retry limits, code evidence, visual evidence, and recovery state into explicit, machine-checked constraints.
 
-Graph state files are local work artifacts by default. They should not be staged, committed, overwritten, or deleted unless the user requests it.
+Graph state files are local work artifacts by default. Do not stage, commit, overwrite, or delete them unless the user requests it.
