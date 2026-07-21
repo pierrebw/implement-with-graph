@@ -16,7 +16,7 @@ from typing import Any
 
 
 SCHEMA_VERSION = 1
-NODE_KINDS = {"contract", "work", "decision", "gate", "repair", "terminal"}
+NODE_KINDS = {"contract", "work", "decision", "gate", "visual_gate", "repair", "terminal"}
 NODE_STATUSES = {"blocked", "ready", "active", "passed", "failed", "skipped"}
 EDGE_KINDS = {"dependency", "branch", "repair", "retry"}
 CHECK_STATUSES = {"not_run", "pending", "passed", "failed", "blocked"}
@@ -77,9 +77,17 @@ def validate_graph(data: dict[str, Any]) -> list[str]:
     if data.get("schema_version") != SCHEMA_VERSION:
         errors.append(f"schema_version must equal {SCHEMA_VERSION}")
 
+    visual_required = data.get("visual_required", False)
+    if not isinstance(visual_required, bool):
+        errors.append("visual_required must be a boolean when present")
+        visual_required = False
+
     for field in ("task", "goal", "request", "next_action", "last_checkpoint"):
         if not isinstance(data.get(field), str):
             errors.append(f"{field} must be a string")
+    next_action = data.get("next_action")
+    if isinstance(next_action, str) and ("\n" in next_action or len(next_action) > 240):
+        errors.append("next_action must be one concise line of at most 240 characters")
 
     for field in ("non_goals", "changed_files", "decisions", "risks"):
         require_list(data.get(field), field, errors)
@@ -135,6 +143,8 @@ def validate_graph(data: dict[str, Any]) -> list[str]:
     node_map: dict[str, dict[str, Any]] = {}
     active_ids: list[str] = []
     terminal_ids: list[str] = []
+    gate_ids: list[str] = []
+    visual_gate_ids: list[str] = []
     for index, node in enumerate(nodes):
         location = f"nodes[{index}]"
         if not isinstance(node, dict):
@@ -159,6 +169,12 @@ def validate_graph(data: dict[str, Any]) -> list[str]:
             active_ids.append(node_id)
         if node.get("kind") == "terminal":
             terminal_ids.append(node_id)
+        if node.get("kind") == "gate":
+            gate_ids.append(node_id)
+        if node.get("kind") == "visual_gate":
+            visual_gate_ids.append(node_id)
+            if visual_required and status == "skipped":
+                errors.append(f"{location} is a required visual gate and cannot be skipped")
         for field in ("scope", "actions", "exit_checks", "evidence"):
             require_list(node.get(field), f"{location}.{field}", errors)
         if not isinstance(node.get("notes"), str):
@@ -178,8 +194,12 @@ def validate_graph(data: dict[str, Any]) -> list[str]:
 
     if len(active_ids) > 1:
         errors.append(f"at most one node may be active; found {active_ids}")
+    if len(nodes) > 20:
+        errors.append("a graph may contain at most 20 nodes; split larger work into phases")
     if nodes and len(terminal_ids) != 1:
         errors.append(f"a populated graph must contain exactly one terminal node; found {terminal_ids}")
+    if nodes and visual_required and not visual_gate_ids:
+        errors.append("visual_required is true but the graph has no visual_gate node")
 
     current_node = data.get("current_node")
     if current_node is not None and current_node not in node_map:
@@ -246,6 +266,29 @@ def validate_graph(data: dict[str, Any]) -> list[str]:
             errors.append(f"{node_id} is failed but has no outgoing repair edge")
 
     for terminal_id in terminal_ids:
+        gate_predecessors = [
+            source
+            for source in incoming_dependencies.get(terminal_id, [])
+            if node_map[source].get("kind") in {"gate", "visual_gate"}
+        ]
+        if not gate_predecessors:
+            errors.append(f"terminal node {terminal_id} must depend directly on a verification gate")
+
+    if visual_required:
+        for visual_gate_id in visual_gate_ids:
+            code_gate_predecessors = [
+                source
+                for source in incoming_dependencies.get(visual_gate_id, [])
+                if node_map[source].get("kind") == "gate"
+            ]
+            if not code_gate_predecessors:
+                errors.append(
+                    f"required visual gate {visual_gate_id} must depend directly on a code/behavior gate"
+                )
+            if visual_gate_id not in outgoing_repair:
+                errors.append(f"required visual gate {visual_gate_id} must have an outgoing repair edge")
+
+    for terminal_id in terminal_ids:
         terminal = node_map[terminal_id]
         if terminal.get("status") == "passed":
             incomplete_nodes = [
@@ -263,10 +306,22 @@ def validate_graph(data: dict[str, Any]) -> list[str]:
             ]
             if incomplete_acceptance:
                 errors.append(f"terminal node passed with incomplete acceptance criteria: {incomplete_acceptance}")
+            if not data.get("acceptance_criteria"):
+                errors.append("terminal node passed without acceptance criteria")
             if incomplete_invariants:
                 errors.append(f"terminal node passed with incomplete invariants: {incomplete_invariants}")
+            if not data.get("invariants"):
+                errors.append("terminal node passed without protected invariants")
+            if not any(node_map[node_id].get("status") == "passed" for node_id in gate_ids):
+                errors.append("terminal node passed without a passed code/behavior gate")
             if data.get("risks"):
                 errors.append("terminal node passed while unresolved risks remain")
+            if visual_required:
+                incomplete_visual = [
+                    node_id for node_id in visual_gate_ids if node_map[node_id].get("status") != "passed"
+                ]
+                if incomplete_visual:
+                    errors.append(f"terminal node passed with incomplete visual gates: {incomplete_visual}")
 
     return errors
 
@@ -314,6 +369,7 @@ def render_graph(data: dict[str, Any]) -> str:
         "── IMPLEMENTATION GRAPH " + "─" * 39,
         f"TASK     {data.get('task', '')}",
         f"GOAL     {data.get('goal', '')}",
+        f"VISUAL   {'required' if data.get('visual_required', False) else 'not required'}",
         "",
     ]
     expanded: set[str] = set()
@@ -379,6 +435,12 @@ def checkpoint_text(data: dict[str, Any]) -> str:
 
     acceptance = data.get("acceptance_criteria", [])
     invariants = data.get("invariants", [])
+    visual_gates = [node for node in node_map.values() if node.get("kind") == "visual_gate"]
+    visual_summary = (
+        f"required — {sum(1 for node in visual_gates if node.get('status') == 'passed')}/{len(visual_gates)} passed"
+        if data.get("visual_required", False)
+        else "not required"
+    )
     lines = [
         "── RECOVERY CHECKPOINT " + "─" * 39,
         f"TASK       {data.get('task', '')}",
@@ -391,6 +453,7 @@ def checkpoint_text(data: dict[str, Any]) -> str:
         f"BLOCKED    {joined('blocked')}",
         f"ACCEPTANCE {sum(1 for item in acceptance if item.get('status') == 'passed')}/{len(acceptance)} passed",
         f"INVARIANTS {sum(1 for item in invariants if item.get('status') == 'passed')}/{len(invariants)} passed",
+        f"VISUAL     {visual_summary}",
         f"CHANGED    {', '.join(data.get('changed_files', [])) or 'none recorded'}",
         f"RISKS      {len(data.get('risks', []))}",
         f"UPDATED    {data.get('last_checkpoint', '') or 'not checkpointed'}",
@@ -415,6 +478,7 @@ def command_init(args: argparse.Namespace) -> None:
         "task": args.task,
         "goal": args.goal,
         "request": args.request or args.task,
+        "visual_required": args.visual_required,
         "non_goals": [],
         "acceptance_criteria": [],
         "invariants": [],
@@ -576,6 +640,11 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--task", required=True)
     init_parser.add_argument("--goal", required=True)
     init_parser.add_argument("--request")
+    init_parser.add_argument(
+        "--visual-required",
+        action="store_true",
+        help="require a passed visual-runtime gate before verified completion",
+    )
     init_parser.add_argument("--force", action="store_true", help="overwrite an existing file")
     init_parser.set_defaults(func=command_init)
 
