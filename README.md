@@ -1,3 +1,36 @@
+## Visual communication
+
+Use terminal-style dependency graphs when explaining:
+
+- Architecture and data flow
+- Implementation plans
+- Task dependencies
+- Troubleshooting paths
+- Testing and completion status
+
+Graph requirements:
+
+- Use a monospace terminal appearance.
+- Use numbered nodes such as `[01]`, `[02A]`, and `[02B]`.
+- Connect dependent nodes with visible lines and arrows.
+- Keep node descriptions short and easy to scan.
+- Show parallel work in adjacent columns.
+- Show decision gates and repair paths.
+- End implementation graphs with `PASS`, `FAIL`, and `INCOMPLETE`
+  states where appropriate.
+- Prefer a rendered HTML visualization when available.
+- Use Mermaid as a fallback.
+- Use plain text only when rendered formats are unavailable.
+
+
+
+
+
+
+
+
+
+
 # Implement with Graph
 
 A Codex skill for executing non-trivial code changes through a persistent terminal-style dependency graph.
