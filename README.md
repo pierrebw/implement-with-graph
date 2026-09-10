@@ -1,3 +1,70 @@
+────────
+
+name: render-terminal-graphs description: Render workflows, architecture, implementation plans, task dependencies, troubleshooting paths, data flows, and completion states as lightweight terminal-style inline HTML graphs. Use whenever the user asks for a graph, dependency graph, terminal-style graph, visual workflow, architecture flow, implementation map, or asks to make an explanation look like the rack-tool graph. Also use when an interconnected process would be substantially clearer as a graph. Do not use for ordinary single facts, one-step instructions, or simple comparisons with no meaningful dependencies.
+
+Render Terminal Graphs
+
+Display the finished graph directly in the conversation as responsive inline HTML. Preserve the visual language of the rack-tool graph: transparent surface, monospace text, numbered nodes, thin SVG connectors, generous vertical spacing, and restrained status color.
+
+Build the graph
+
+1. Reduce the subject to actions, inputs, checks, decisions, repair routes, and outcomes.
+2. Assign short labels such as [01], [02A], and [02B].
+3. Arrange prerequisites above their dependents. Place parallel nodes in the same row, with no more than three nodes per row.
+4. Keep each node to a short name and at most three compact detail lines.
+5. Label comparison inputs EXPECTED and OBSERVED when applicable.
+6. Distinguish confirmed failures from missing evidence. Use FAIL for a demonstrated problem and INCOMPLETE for an unverified result.
+7. Connect only real dependencies. Merge parallel branches at their next shared dependency.
+
+Render it
+
+Use scripts/render_terminal_graph.py to keep the appearance consistent. Create a temporary JSON specification matching this shape:
+
+```json
+{
+  "title": "$ rack-tool / proposed workflow",
+  "aria_label": "A short accessible description of the complete graph.",
+  "rows": [
+    [{"id":"1","label":"[01] USER","name":"Choose action","details":["Select a rack"]}],
+    [
+      {"id":"2","label":"[02A] PLAN","name":"NetBox","details":["Expected endpoints"]},
+      {"id":"3","label":"[02B] LIVE","name":"Arista EOS","details":["Observed state"]}
+    ],
+    [{"id":"4","label":"[03] RESULT","name":"PASS","status":"pass","details":["Checks agree"]}]
+  ],
+  "edges": [["1","2"],["1","3"],["2","4"],["3","4"]]
+}
+```
+
+Run:
+
+```bash
+python3 <skill-root>/scripts/render_terminal_graph.py graph.json /workspace/<concise-title>.html
+```
+
+Write inline visualization files to /workspace as lowercase hyphenated names. The generator produces an HTML fragment, not a standalone webpage.
+
+Display the generated file using the host’s inline visualization content reference. Do not provide a download link, expose the HTML source, or describe the rendering mechanism unless the user explicitly asks.
+
+Appearance contract
+
+• Keep the background transparent and the overall surface unframed.
+• Use monospace text and centered node content.
+• Use no cards, boxes, shadows, gradients, decorative borders, or oversized icons.
+• Draw thin neutral connector lines with small arrowheads behind the node text.
+• Use neutral theme-aware colors for text and lines.
+• Use green only for PASS or ACCEPTED, red only for FAIL or REPAIR, and orange only for INCOMPLETE or UNKNOWN.
+• Reflow at narrow widths without clipped or overlapping text.
+• Include a concise visible terminal title beginning with $.
+• Include an accessible description covering the full graph.
+
+Response contract
+
+Return the rendered graph as the main answer. Add at most one short sentence outside it when the user needs a key limitation or decision explained.
+
+Always use inline HTML for these graphs. Do not substitute Mermaid, ASCII art, Markdown tables, or an HTML code block merely because they are faster. If the runtime cannot display inline HTML visualizations, state that briefly and use Mermaid as the emergency fallback.
+
+
 ## Visual communication
 
 Use terminal-style dependency graphs when explaining:
